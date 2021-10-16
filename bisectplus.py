@@ -37,6 +37,7 @@ from bpy.props import (
         StringProperty,
         FloatProperty,
         BoolProperty,
+        IntProperty,
         )
 
 from bpy.types import (
@@ -45,6 +46,21 @@ from bpy.types import (
         PropertyGroup,
         )
 
+#from Scientific.Geometry import Vector
+
+def dump(obj):
+    for attr in dir(obj):
+        if hasattr(obj, attr):
+            print("obj.%s = %r" % (attr, getattr(obj, attr)))  
+         
+def GetArrayModifiers(_obj):
+    arrModifiers = []
+    allModifiers = _obj.modifiers
+    for mod in allModifiers:
+        if(mod.name.startswith("Array")):
+            arrModifiers.append(mod)
+    return arrModifiers
+   
 #OPERATOR class
 class bisectplus(Operator):
     bl_idname = 'mesh.bisectplus'
@@ -55,18 +71,24 @@ class bisectplus(Operator):
     def poll(cls, context):
         objs = context.selected_objects
         return objs != [] and objs[0].type == "MESH"
-
-    def execute(self, context):
+    
+    #@classmethod
+    def doBisect(self, context, inObj, offset):
+        
         objectselection_props = context.window_manager.objectselection_props
-        obj = context.active_object
-
+        obj = inObj
+        bpy.context.view_layer.objects.active = obj
+        obj.vertex_groups.clear()
         #go in EDIT MODE to see the results as it's a mesh operation
-        bpy.ops.object.mode_set(mode='EDIT')
+        #print("A")
         cpobj = objectselection_props.cuttingplane
 
         #only accept mesh
         if cpobj.type != 'MESH':
-            return {'CANCELED'}
+            print("Not Mesh")
+            return
+        
+        bpy.ops.object.mode_set(mode='EDIT')
         
         bm = bmesh.new()
         bm.from_mesh(cpobj.data)
@@ -75,7 +97,8 @@ class bisectplus(Operator):
         bm.faces[0].select = True
         
         if len(bm.faces) > 1:
-            return {'CANCELED'}
+            print("Too many FACES!")
+            return
 
         bm.verts.ensure_lookup_table()
         v1 = cpobj.matrix_world @ bm.verts[0].co
@@ -87,11 +110,16 @@ class bisectplus(Operator):
         nv3 = v3 - v2
         vn = nv2.cross(nv3)
         vn.normalize()
+        #dump(vn)
         face = bm.faces[0]
 
         origin =  cpobj.matrix_world @ face.calc_center_median()
         normal = vn
         
+        #print("normal = \t\t%s" % normal)
+        #print("origin = \t\t%s" % origin)
+        origin+=normal*offset;
+        #print("origin offset = \t\t%s" % origin)
         #keep the manual selection saved in a vertex group
         if objectselection_props.rememberselection:
             obj.vertex_groups.new(name="prebisectselection")
@@ -105,7 +133,7 @@ class bisectplus(Operator):
                 v.select = True
         bpy.ops.object.mode_set(mode='EDIT')
         
-        
+        #return
         #call bisect with the selected plane
         bpy.ops.mesh.bisect(
             plane_co = origin,
@@ -159,6 +187,8 @@ class bisectplus(Operator):
         bpy.ops.object.vertex_group_assign()
         bpy.ops.object.vertex_group_deselect()
     
+        new_objects = []
+        
         if objectselection_props.rememberselection:
             bpy.ops.object.vertex_group_set_active(group='prebisectselection')
             bpy.ops.object.vertex_group_select()
@@ -189,16 +219,121 @@ class bisectplus(Operator):
                 v.select = True
             bpy.ops.object.mode_set(mode='EDIT')
             bpy.ops.object.vertex_group_assign()
-
-
-        #clean up
+            
+        if objectselection_props.separatemesh:
+            bpy.ops.object.vertex_group_deselect()
+            print("separate begin")
+            bpy.ops.object.mode_set(mode='EDIT')
+            #bpy.ops.mesh.select_all( action = 'DESELECT' )
+            bpy.ops.object.vertex_group_set_active(group='BackSide')
+            obj.vertex_groups.active = obj.vertex_groups["BackSide"]
+            bpy.ops.object.vertex_group_select()
+            #return []
+            #for v in obj.data.vertices:
+            #    v.select = True
+            something_selected = False;
+            #dump(obj)
+            #selected_verts = list(filter(lambda v: v.select, obj.data.vertices))
+            #
+            
+            #vgVerts = [ v for v in obj.data.vertices if v.select ]
+            #print("verts %s " % selected_verts)
+            #str = "";
+            #for v in obj.data.vertices:
+                #for g in v.groups:
+                    #dump(g)
+                    #print("------------------")
+                    #dump(obj.vertex_groups["BackSide"])
+                    #if g.group == obj.vertex_groups["BackSide"].index:
+                        #something_selected = True
+                        #break;
+            bpy.ops.object.mode_set(mode='OBJECT')
+            for v in obj.data.vertices:
+                #dump(v)
+                #break;
+                if v.select:
+                    #print("v.select = %s " % v.select)
+                    something_selected = True
+                    break;
+                
+            #print("verts selected %s " % str)
+            if something_selected:
+                bpy.ops.object.mode_set(mode='EDIT')
+                lo_b = [ob for ob in bpy.data.objects if ob.type == 'MESH']
+                print("separating")
+                bpy.ops.mesh.separate(type='SELECTED')
+                lo_a = [ob for ob in bpy.data.objects if ob.type == 'MESH']
+                for i in lo_b:
+                    lo_a.remove(i)
+                print("new_objects %s " % len(lo_a))
+                new_objects = lo_a;
+            else:
+                print("nothing is selected")
+            
+            bpy.ops.object.mode_set(mode='OBJECT')
+        
+        bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.ops.object.select_all(action='DESELECT')
+        
         bm.free()
+        
+        return new_objects;
+    
+    def bisectObjects(self,context,objects, offset):
+        
+        new_objects = []
+        for ob in objects:
+            print("processing Object %s " % ob.name)
+            bpy.context.view_layer.objects.active = ob
+            #dump(ob)
+            ob.select_set(True)
+            tnew_objects = self.doBisect(context,ob,offset)
+            #dump(tnew_objects)
+            
+            if tnew_objects:
+                print(" t new_objects %s " % len(tnew_objects))
+                if len(tnew_objects):
+                    new_objects=new_objects+new_objects
+            #ob.select_set(False)
+        
+        print("new_objects %s " % len(new_objects))
+        return new_objects;
+    
+    def execute(self, context):
+        list_ob = [];
+        list_ob = bpy.context.selected_objects;
+        
+        bpy.ops.object.select_all(action='DESELECT')
+        
+        for ob in list_ob:
+            ob.select_set(False)
+        
+        objectselection_props = context.window_manager.objectselection_props
+        #v1 = Vector(1, 2, 3)
+        arrModifiers = GetArrayModifiers(objectselection_props.cuttingplane)
+        if(len(arrModifiers) == 0):
+            print("No Array modifiers found in " + context.window_manager.objectselection_props.cuttingplane.name)
+            self.bisectObjects(context,list_ob,0)
+        else:
+            #dump(arrModifiers[0])
+            
+            for i in range(objectselection_props.loopCount):
+                print("Slice No: %s" % i)
+                tnew_objects = self.bisectObjects(context,list_ob,i*20)
+                list_ob=list_ob+tnew_objects
+                
+            
+        ##return {'FINISHED'}
+        
+        
+        #clean up
+        
         return {'FINISHED'}
 
 
 #ui class
 class OBJECTSELECTION_Panel(Panel):
-    bl_idname = 'OBJECTSELECTION_Panel'
+    bl_idname = 'OBJECTSELECTION_PT_Panel'
     bl_label = 'Bisect Plus'
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -232,6 +367,9 @@ class OBJECTSELECTION_Panel(Panel):
         box.prop(cell_props, "fill")
         box.prop(cell_props, "clearinner")
         box.prop(cell_props, "clearouter")
+        box.prop(cell_props, "separatemesh")
+        box.prop(cell_props, "separateloop")
+        box.prop(cell_props, "loopCount")
         box.prop(cell_props, "axisthreshold")
         
         if cell_props.cuttingplane:
@@ -257,6 +395,7 @@ class ObjectSelectionProperties(PropertyGroup):
             description="Must be a single face Plane Object to cut.",
             type=bpy.types.Object,
             )
+            
     rememberselection: BoolProperty(
             name="Remember manual selection",
             description="Your selection before the operation will be restored,\nafter the operation is done.",
@@ -274,16 +413,39 @@ class ObjectSelectionProperties(PropertyGroup):
             description="Fill in the cut\nbeware of new faces if used without clear inner or outer",
             default=False,
             )
+            
     clearinner: BoolProperty(
             name="Clear Inner",
             description="Remove geometry behind the plane",
             default=False,
             )
+            
     clearouter: BoolProperty(
             name="Clear Outer",
             description="Remove geometry in front of the plane",
             default=False,
             )
+            
+    separatemesh: BoolProperty(
+            name="Separate",
+            description="Separate Geometry",
+            default=False,
+            )
+            
+    separateloop: BoolProperty(
+            name="Separate Loop",
+            description="Separate Geometry",
+            default=False,
+            ) 
+                   
+    loopCount: IntProperty(
+            name="Count:",
+            description="How many times",
+            default=1,
+            min=0,
+            max=100,
+            )
+                    
     axisthreshold: FloatProperty(
             name="Axisthreshold:",
             description="Preserves the geometry along the cutline",
@@ -292,8 +454,7 @@ class ObjectSelectionProperties(PropertyGroup):
             max=1.0,
             precision=4,
             )
-            
-            
+
             
 classes = (
     ObjectSelectionProperties,
@@ -318,4 +479,5 @@ def unregister():
         unregister_class(cls)
 
 if __name__ == "__main__" :
+    #unregister()
     register()

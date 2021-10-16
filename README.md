@@ -1,5 +1,6 @@
 # Bisectplus Add-on
-Version 1.1 out now!
+
+Added options for separatoion of objects and loop cuts.
 
 Bisect function called with a Plane object.
 

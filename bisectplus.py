@@ -127,13 +127,13 @@ class bisectplus(Operator):
         
         #only works in Object Mode
         bpy.ops.object.mode_set(mode='OBJECT')
-        if objectselection_props.selectionoverride:
+        #if objectselection_props.selectionoverride:
             #all vertices need to be selected
-            for v in obj.data.vertices:
-                v.select = True
+            #for v in obj.data.vertices:
+                #v.select = True
         bpy.ops.object.mode_set(mode='EDIT')
-        
-        #return
+        bpy.ops.mesh.select_all( action = 'SELECT' )
+        #return []
         #call bisect with the selected plane
         bpy.ops.mesh.bisect(
             plane_co = origin,
@@ -143,7 +143,7 @@ class bisectplus(Operator):
             clear_outer = objectselection_props.clearouter,
             threshold = objectselection_props.axisthreshold,
             )
-
+        #return []
         obj.vertex_groups.new(name="bisectionloop")
         bpy.ops.object.vertex_group_assign()
         mat = obj.matrix_world
@@ -166,7 +166,10 @@ class bisectplus(Operator):
             distance = mathutils.geometry.distance_point_to_plane(pos, origin, normal)
             if distance < objectselection_props.axisthreshold:
                 indexarrayB.append(vertex.index)
-
+        
+        if (len(indexarrayA)==0) or (len(indexarrayB)==0):
+            bpy.ops.object.mode_set(mode='OBJECT')
+            return[]
         #only works in Object Mode
         bpy.ops.object.mode_set(mode='OBJECT')
         sideA.add( indexarrayA, 1.0, 'REPLACE' )
@@ -222,8 +225,8 @@ class bisectplus(Operator):
             
         if objectselection_props.separatemesh:
             bpy.ops.object.vertex_group_deselect()
-            print("separate begin")
-            bpy.ops.object.mode_set(mode='EDIT')
+            #print("separate begin")
+            #bpy.ops.object.mode_set(mode='EDIT')
             #bpy.ops.mesh.select_all( action = 'DESELECT' )
             bpy.ops.object.vertex_group_set_active(group='BackSide')
             obj.vertex_groups.active = obj.vertex_groups["BackSide"]
@@ -259,16 +262,17 @@ class bisectplus(Operator):
             #print("verts selected %s " % str)
             if something_selected:
                 bpy.ops.object.mode_set(mode='EDIT')
-                lo_b = [ob for ob in bpy.data.objects if ob.type == 'MESH']
-                print("separating")
+                #lo_b = [ob for ob in bpy.data.objects if ob.type == 'MESH']
+                #print("separating")
                 bpy.ops.mesh.separate(type='SELECTED')
-                lo_a = [ob for ob in bpy.data.objects if ob.type == 'MESH']
-                for i in lo_b:
-                    lo_a.remove(i)
-                print("new_objects %s " % len(lo_a))
-                new_objects = lo_a;
+                #return []
+                #lo_a = [ob for ob in bpy.data.objects if ob.type == 'MESH']
+                #for i in lo_b:
+                    #lo_a.remove(i)
+                #print("new separated objects %s " % len(lo_a))
+                #new_objects = lo_a;
             else:
-                print("nothing is selected")
+                print("nothing separated")
             
             bpy.ops.object.mode_set(mode='OBJECT')
         
@@ -279,11 +283,14 @@ class bisectplus(Operator):
         
         return new_objects;
     
-    def bisectObjects(self,context,objects, offset):
+    def bisectObjects(self,context,objects, offset, inob):
         
         new_objects = []
+        lenon = len(objects)
+        cntproc = 0
         for ob in objects:
-            print("processing Object %s " % ob.name)
+            cntproc = cntproc+1
+            print("processing Object %s %s %s/%s" % (ob.name , inob , cntproc , lenon) )
             bpy.context.view_layer.objects.active = ob
             #dump(ob)
             ob.select_set(True)
@@ -291,12 +298,13 @@ class bisectplus(Operator):
             #dump(tnew_objects)
             
             if tnew_objects:
-                print(" t new_objects %s " % len(tnew_objects))
+                #print(" t new_objects %s " % len(tnew_objects))
                 if len(tnew_objects):
-                    new_objects=new_objects+new_objects
-            #ob.select_set(False)
+                    new_objects=new_objects+tnew_objects
+            #print("new objects now: %s " % len(new_objects))
+            ob.select_set(False)
         
-        print("new_objects %s " % len(new_objects))
+        #print("out new objects %s " % len(new_objects))
         return new_objects;
     
     def execute(self, context):
@@ -304,22 +312,26 @@ class bisectplus(Operator):
         list_ob = bpy.context.selected_objects;
         
         bpy.ops.object.select_all(action='DESELECT')
-        
+        #return {'FINISHED'}
         for ob in list_ob:
             ob.select_set(False)
         
         objectselection_props = context.window_manager.objectselection_props
         #v1 = Vector(1, 2, 3)
         arrModifiers = GetArrayModifiers(objectselection_props.cuttingplane)
-        if(len(arrModifiers) == 0):
-            print("No Array modifiers found in " + context.window_manager.objectselection_props.cuttingplane.name)
-            self.bisectObjects(context,list_ob,0)
+        if(objectselection_props.separateloop==False):
+            self.bisectObjects(context,list_ob,0.0,0)
         else:
             #dump(arrModifiers[0])
+            print("Doing loop")
             
             for i in range(objectselection_props.loopCount):
                 print("Slice No: %s" % i)
-                tnew_objects = self.bisectObjects(context,list_ob,i*20)
+                #print("Slice No: %s" % objectselection_props.normaldir)
+                step_i = float(i)*objectselection_props.step*objectselection_props.normaldir;
+                #print("Slice step: %s" % step_i)
+                tnew_objects = []
+                tnew_objects = self.bisectObjects(context,list_ob,step_i,i)
                 list_ob=list_ob+tnew_objects
                 
             
@@ -370,6 +382,8 @@ class OBJECTSELECTION_Panel(Panel):
         box.prop(cell_props, "separatemesh")
         box.prop(cell_props, "separateloop")
         box.prop(cell_props, "loopCount")
+        box.prop(cell_props, "normaldir")
+        box.prop(cell_props, "step")
         box.prop(cell_props, "axisthreshold")
         
         if cell_props.cuttingplane:
@@ -445,7 +459,25 @@ class ObjectSelectionProperties(PropertyGroup):
             min=0,
             max=100,
             )
-                    
+    
+    normaldir: FloatProperty(
+            name="Normal:",
+            description="Direction",
+            default=1.0,
+            min=-1.0,
+            max=1.0,
+            precision=1,
+            )
+    
+    step: FloatProperty(
+            name="Step:",
+            description="Step Size",
+            default=10,
+            min=0,
+            max=1000000.0,
+            precision=4,
+            )
+                                    
     axisthreshold: FloatProperty(
             name="Axisthreshold:",
             description="Preserves the geometry along the cutline",
